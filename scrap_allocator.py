@@ -7,8 +7,8 @@ from openpyxl import load_workbook
 print("--- Script Starting ---")
 
 # --- Configuration ---
-WORKSHEET_FILE = '2.25 SW FER Sales Worksheet.xlsx'
-RECAP_FILE = 'West Ferrous Sales Allocation - Feb2025FinalRev1.xlsx'
+WORKSHEET_FILE = '03.25 SW FER Sales WorksheetTEST.xlsx'
+RECAP_FILE = 'West Ferrous Sales Allocation - March2025FINALRev1.0.xlsx'
 RECAP_SHEET_NAME = 'By Consumer' # The sheet in the recap file to update
 
 # Define the sheets in the worksheet file that correspond to depots
@@ -199,7 +199,8 @@ def main():
             print(f"Warning: Could not extract depot number from sheet name '{sheet_name}'. Skipping.")
             continue
 
-        # -- MODIFIED: Always use header row 3 (index 2) for the sales worksheet --
+        # -- Set header_index back to fixed Row 3 --
+        # header_index = 6 if sheet_name in ['402 Houston', '405 Liberty', '407 Bryan', '410 Dallas West'] else 5 # Dynamic logic
         header_index = 2 # Header is on row 3
         print(f"  Processing sheet: {sheet_name} (Depot {depot_num}), expecting headers in row {header_index + 1}")
 
@@ -316,9 +317,18 @@ def main():
         known_mills = set(info['mill'] for depot_map in mapping.values() for info in depot_map.values())
         known_aliases = set(info['alias'] for depot_map in mapping.values() for info in depot_map.values())
 
+        # --- Hardcoded Skip for Specific Unmapped Mills ---
+        if structure_text in ['CMC - LCMC606', 'East Jordan - LEJO601']:
+            # print(f"DEBUG: Hardcoded skip - Resetting mill context for: '{structure_text}'")
+            current_mill = None # Ensure subsequent lookups fail
+            # Potentially clear sums if needed, but likely handled by 0 lookup
+            continue # Skip further processing for this specific header row
+        # --- End Hardcoded Skip ---
+
         if structure_text in known_mills:
             is_mill_row = True
         else:
+            # Determine row type if not a known mill or explicitly skipped header
             depots_in_row = find_depot_numbers_in_recap_row(structure_text)
             # Check for Depot Grand Total first (e.g., "Total GT D401")
             grand_total_match = re.match(r"Total GT D(\d+)", structure_text)
@@ -399,6 +409,9 @@ def main():
                     found_match_for_row = True
 
             if found_match_for_row:
+                # -- REMOVE DEBUG: Print context JUST BEFORE writing --
+                # print(f"DEBUG: Writing Alias - Row: {index + 7}, Structure: '{structure_text}', MillContext: '{current_mill}', DepotHeader: '{current_depot_header_text}', AliasLookup: '{recap_alias_lookup}', Amount: {total_amount_for_row}")
+                # -- END REMOVE --
                 if RECAP_AMOUNT_COL in df_recap_modified.columns:
                     if pd.api.types.is_number(total_amount_for_row):
                         df_recap_modified.loc[index, RECAP_AMOUNT_COL] = total_amount_for_row
@@ -470,12 +483,14 @@ def main():
             else:
                 # Cell doesn't contain a formula, update its value
                 calculated_value = row_data[RECAP_AMOUNT_COL]
-                # Only write if the value needs changing (optional optimization)
+                # Only write if the value needs changing
                 if target_cell.value != calculated_value:
+                     # -- REMOVE DEBUG: Print Save Action --
+                     # print(f"DEBUG: Saving - Cell: {target_cell.coordinate}, OldValue: {target_cell.value}, NewValue: {calculated_value}")
+                     # -- END REMOVE --
                      target_cell.value = calculated_value
                      cells_updated_values += 1
-                # else: # If value is already correct, don't count as update
-                #     pass 
+                 # else: # If value is already correct, don't count as update
 
         print(f"  Finished checking: Updated {cells_updated_values} non-formula cells, skipped {cells_skipped_formulas} formula cells.")
 
