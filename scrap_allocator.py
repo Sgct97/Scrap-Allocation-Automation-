@@ -7,8 +7,8 @@ from openpyxl import load_workbook
 print("--- Script Starting ---")
 
 # --- Configuration ---
-WORKSHEET_FILE = '03.25 SW FER Sales WorksheetTEST.xlsx'
-RECAP_FILE = 'West Ferrous Sales Allocation - March2025FINALRev1.0.xlsx'
+WORKSHEET_FILE = '2.25 SW FER Sales Worksheet.xlsx'
+RECAP_FILE = 'West Ferrous Sales Allocation - Feb2025FinalRev1.xlsx'
 RECAP_SHEET_NAME = 'By Consumer' # The sheet in the recap file to update
 
 # Define the sheets in the worksheet file that correspond to depots
@@ -199,12 +199,12 @@ def main():
             print(f"Warning: Could not extract depot number from sheet name '{sheet_name}'. Skipping.")
             continue
 
-        # Determine header row index based on sheet name
-        header_index = 6 if sheet_name in ['402 Houston', '405 Liberty', '407 Bryan', '410 Dallas West'] else 5
+        # -- MODIFIED: Always use header row 3 (index 2) for the sales worksheet --
+        header_index = 2 # Header is on row 3
         print(f"  Processing sheet: {sheet_name} (Depot {depot_num}), expecting headers in row {header_index + 1}")
 
         try:
-            # Read individual sheet with specific header row
+            # Read individual sheet with specific header row (index 2)
             df_sheet = pd.read_excel(WORKSHEET_FILE, sheet_name=sheet_name, engine='openpyxl', header=header_index)
         except Exception as e:
             print(f"  ERROR: Could not read sheet '{sheet_name}'. Error: {e}. Skipping sheet.")
