@@ -3,13 +3,18 @@ import re
 import sys
 import traceback
 from openpyxl import load_workbook
+from openpyxl.utils.cell import get_column_letter
+import argparse
 
 print("--- Script Starting ---")
 
 # --- Configuration ---
-WORKSHEET_FILE = '03.25 SW FER Sales WorksheetTEST.xlsx'
-RECAP_FILE = 'West Ferrous Sales Allocation - March2025FINALRev1.0.xlsx'
-RECAP_SHEET_NAME = 'By Consumer' # The sheet in the recap file to update
+RECAP_SHEET_NAME = 'By Consumer'
+RECAP_STRUCTURE_COL = 'Unnamed: 0'
+RECAP_AMOUNT_COL = 'Tons'
+WORKSHEET_GRADE_COL = 'Ferrous Product Group & Grade'
+WORKSHEET_MILL_COL = 'Mill'
+WORKSHEET_TONS_COL = 'Total Available in Sales Month (GT)'
 
 # Define the sheets in the worksheet file that correspond to depots
 WORKSHEET_DEPOT_SHEETS = [
@@ -21,12 +26,6 @@ WORKSHEET_DEPOT_SHEETS = [
     '410 Dallas West'
     # Add other sheet names if necessary
 ]
-
-# Column names (Identified from HTML files)
-WORKSHEET_GRADE_COL = 'Ferrous Product Group & Grade' # Column A equivalent header name in worksheet
-WORKSHEET_AMOUNT_COL = 'Total Available in Sales Month (GT)' # Column K equivalent header name in worksheet
-RECAP_STRUCTURE_COL = 'Unnamed: 0' # Column A in recap file (no header, contains mills/depots/grades)
-RECAP_AMOUNT_COL = 'Tons' # Column C in recap file (header is 'Tons')
 
 # --- Mapping Data ---
 # Structure: mapping[depot_number_str][worksheet_grade_str] = {'mill': mill_name, 'alias': recap_grade_alias}
@@ -171,18 +170,27 @@ def find_depot_numbers_in_recap_row(text):
 
 # --- Main Logic ---
 def main():
-    print("Starting scrap allocation process...")
+    print("--- Script Starting ---")
+
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(description='Process scrap allocation files.')
+    parser.add_argument('worksheet_file', help='Path to the input Sales Worksheet Excel file.')
+    parser.add_argument('recap_file', help='Path to the input/output Recap Allocation Excel file.')
+    args = parser.parse_args()
+    print(f"Using Worksheet File: {args.worksheet_file}")
+    print(f"Using Recap File: {args.recap_file}")
+    # --- End Argument Parsing ---
 
     # 1. Read Worksheet Data and Aggregate Amounts
     aggregated_amounts = {}
     depot_grand_totals = {} # New dictionary to store total per depot
-    print(f"Reading worksheet file: {WORKSHEET_FILE}")
+    print(f"Reading worksheet file: {args.worksheet_file}")
     # Read sheet names first to know which ones exist
     try:
-        xls = pd.ExcelFile(WORKSHEET_FILE, engine='openpyxl')
+        xls = pd.ExcelFile(args.worksheet_file, engine='openpyxl')
         available_sheets = xls.sheet_names
     except FileNotFoundError:
-        print(f"ERROR: Worksheet file not found: {WORKSHEET_FILE}")
+        print(f"ERROR: Worksheet file not found: {args.worksheet_file}")
         sys.exit(1)
     except Exception as e:
         print(f"ERROR: Could not probe worksheet file sheets: {e}")
@@ -190,7 +198,7 @@ def main():
 
     sheets_to_process = [s for s in WORKSHEET_DEPOT_SHEETS if s in available_sheets]
     if not sheets_to_process:
-        print(f"ERROR: None of the configured depot sheets {WORKSHEET_DEPOT_SHEETS} were found in {WORKSHEET_FILE}")
+        print(f"ERROR: None of the configured depot sheets {WORKSHEET_DEPOT_SHEETS} were found in {args.worksheet_file}")
         sys.exit(1)
 
     for sheet_name in sheets_to_process:
@@ -206,7 +214,7 @@ def main():
 
         try:
             # Read individual sheet with specific header row (index 2)
-            df_sheet = pd.read_excel(WORKSHEET_FILE, sheet_name=sheet_name, engine='openpyxl', header=header_index)
+            df_sheet = pd.read_excel(args.worksheet_file, sheet_name=sheet_name, engine='openpyxl', header=header_index)
         except Exception as e:
             print(f"  ERROR: Could not read sheet '{sheet_name}'. Error: {e}. Skipping sheet.")
             continue
@@ -215,17 +223,17 @@ def main():
         if WORKSHEET_GRADE_COL not in df_sheet.columns:
             print(f"  ERROR: Grade column '{WORKSHEET_GRADE_COL}' not found in sheet '{sheet_name}'. Skipping sheet.")
             continue
-        if WORKSHEET_AMOUNT_COL not in df_sheet.columns:
-            print(f"  ERROR: Amount column '{WORKSHEET_AMOUNT_COL}' not found in sheet '{sheet_name}'. Skipping sheet.")
+        if WORKSHEET_TONS_COL not in df_sheet.columns:
+            print(f"  ERROR: Amount column '{WORKSHEET_TONS_COL}' not found in sheet '{sheet_name}'. Skipping sheet.")
             continue
 
         for index, row in df_sheet.iterrows():
             # Access columns by header name for reliability
             worksheet_grade_original = str(row[WORKSHEET_GRADE_COL]).strip() if pd.notna(row[WORKSHEET_GRADE_COL]) else None
-            amount = pd.to_numeric(row[WORKSHEET_AMOUNT_COL], errors='coerce')
+            tons = pd.to_numeric(row[WORKSHEET_TONS_COL], errors='coerce')
 
             # Skip if grade is blank/None or amount is zero/NaN
-            if not worksheet_grade_original or worksheet_grade_original.isspace() or pd.isna(amount) or amount == 0:
+            if not worksheet_grade_original or worksheet_grade_original.isspace() or pd.isna(tons) or tons == 0:
                 continue
 
             depot_mapping = mapping.get(depot_num)
@@ -239,12 +247,12 @@ def main():
                 continue
             else:
                 grade_info = depot_mapping[matching_grade]
-                mill = grade_info['mill']
+                mill_name = grade_info['mill']
                 alias = grade_info['alias']
-                key = (depot_num, mill, alias)
-                aggregated_amounts[key] = aggregated_amounts.get(key, 0) + amount
+                key = (depot_num, mill_name, alias)
+                aggregated_amounts[key] = aggregated_amounts.get(key, 0) + tons
                 # Also add to the depot grand total
-                depot_grand_totals[depot_num] = depot_grand_totals.get(depot_num, 0) + amount
+                depot_grand_totals[depot_num] = depot_grand_totals.get(depot_num, 0) + tons
 
     print(f"\nFinished reading worksheet. Aggregated {len(aggregated_amounts)} entries.")
     # Optional: Print depot grand totals for debugging
@@ -254,10 +262,10 @@ def main():
     # print("--------------------------\n")
 
     # 2. Read Recap Sheet (using fixed header row 6)
-    print(f"\nReading recap file: {RECAP_FILE}, sheet: {RECAP_SHEET_NAME}")
+    print(f"\nReading recap file: {args.recap_file}, sheet: {RECAP_SHEET_NAME}")
     try:
         # Read using header=5 (Row 6)
-        df_recap = pd.read_excel(RECAP_FILE, sheet_name=RECAP_SHEET_NAME, engine='openpyxl', header=5, keep_default_na=False)
+        df_recap = pd.read_excel(args.recap_file, sheet_name=RECAP_SHEET_NAME, engine='openpyxl', header=5, keep_default_na=False)
 
         # Check if needed columns were found using the names from Row 6
         if RECAP_AMOUNT_COL not in df_recap.columns:
@@ -283,10 +291,10 @@ def main():
         df_recap_modified[RECAP_AMOUNT_COL] = 0.0
 
     except FileNotFoundError:
-        print(f"ERROR: Recap file not found: {RECAP_FILE}")
+        print(f"ERROR: Recap file not found: {args.recap_file}")
         sys.exit(1)
     except ValueError as e: # Handles sheet not found
-        print(f"ERROR: Sheet '{RECAP_SHEET_NAME}' not found in {RECAP_FILE}. Details: {e}")
+        print(f"ERROR: Sheet '{RECAP_SHEET_NAME}' not found in {args.recap_file}. Details: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"ERROR: Could not read recap file: {e}")
@@ -457,10 +465,10 @@ def main():
     print(f"\nFinished processing recap sheet. Updated {rows_updated} rows (including totals).")
 
     # 4. Save Updated Recap File
-    print(f"Saving updated data back to {RECAP_FILE}, sheet: {RECAP_SHEET_NAME}...")
+    print(f"Saving updated data back to {args.recap_file}, sheet: {RECAP_SHEET_NAME}...")
     try:
         # Load the existing workbook, ensure formulas are read (data_only=False)
-        wb = load_workbook(RECAP_FILE, data_only=False)
+        wb = load_workbook(args.recap_file, data_only=False)
         ws = wb[RECAP_SHEET_NAME]
 
         print("  Checking cells and updating non-formula cells only...")
@@ -495,10 +503,10 @@ def main():
         print(f"  Finished checking: Updated {cells_updated_values} non-formula cells, skipped {cells_skipped_formulas} formula cells.")
 
         # Save while preserving formatting
-        wb.save(RECAP_FILE)
+        wb.save(args.recap_file)
         print("File saved successfully.")
     except PermissionError:
-        print(f"\nERROR: Permission denied. Could not save '{RECAP_FILE}'.")
+        print(f"\nERROR: Permission denied. Could not save '{args.recap_file}'.")
         print("Please ensure the file is closed in Excel and you have write permissions.")
         sys.exit(1)
     except Exception as e:
