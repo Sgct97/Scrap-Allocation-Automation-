@@ -386,7 +386,7 @@ def main():
                 recap_alias_lookup = base_alias_found if base_alias_found else recap_alias_raw
             # --- End Alias Extraction Logic ---
 
-            if not depots_for_this_row:
+            if not depots_for_this_row or not recap_alias_lookup:
                 continue
 
             total_amount_for_row = 0
@@ -446,15 +446,39 @@ def main():
     # 4. Save Updated Recap File
     print(f"Saving updated data back to {RECAP_FILE}, sheet: {RECAP_SHEET_NAME}...")
     try:
-        # Load the existing workbook to preserve formatting
-        wb = load_workbook(RECAP_FILE)
+        # Load the existing workbook, ensure formulas are read (data_only=False)
+        wb = load_workbook(RECAP_FILE, data_only=False)
         ws = wb[RECAP_SHEET_NAME]
-        
-        # Update only the values in the Tons column (Column C)
-        for index, row in df_recap_modified.iterrows():
+
+        print("  Checking cells and updating non-formula cells only...")
+        cells_updated_values = 0
+        cells_skipped_formulas = 0
+
+        # Update only the values in the Tons column (Column C), skipping formulas
+        for index, row_data in df_recap_modified.iterrows():
             # Add 7 because Excel is 1-indexed and we have a header row at row 6
-            ws.cell(row=index + 7, column=3, value=row[RECAP_AMOUNT_COL])
-        
+            target_row_excel = index + 7
+            target_col_excel = 3 # Column C
+
+            # Get the cell object
+            target_cell = ws.cell(row=target_row_excel, column=target_col_excel)
+
+            # Check if the cell contains a formula
+            if target_cell.data_type == 'f':
+                # print(f"    Skipping cell {target_cell.coordinate} - contains formula.") # Optional debug print
+                cells_skipped_formulas += 1
+            else:
+                # Cell doesn't contain a formula, update its value
+                calculated_value = row_data[RECAP_AMOUNT_COL]
+                # Only write if the value needs changing (optional optimization)
+                if target_cell.value != calculated_value:
+                     target_cell.value = calculated_value
+                     cells_updated_values += 1
+                # else: # If value is already correct, don't count as update
+                #     pass 
+
+        print(f"  Finished checking: Updated {cells_updated_values} non-formula cells, skipped {cells_skipped_formulas} formula cells.")
+
         # Save while preserving formatting
         wb.save(RECAP_FILE)
         print("File saved successfully.")
